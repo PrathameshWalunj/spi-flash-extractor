@@ -46,3 +46,100 @@ class ChipInfo:
     STATUS_WIP = 0x01  # Write In Progress
     STATUS_WEL = 0x02  # Write Enable Latch
 
+    def __init__(self, bus: int = 0, device: int = 0):
+        """Initialize the SPI controller with advanced error checking"""
+         # Assign bus and device to SPI controller
+        self.bus = bus
+        self.device = device
+        self.spi = None # Placeholder for the SPI device interface
+        self.chip_info = None # Placeholder for detected chip info once connected
+        self._is_connected = False # Track connection status to avoid blind operations
+        self._buffer_size = 4096  #Buffer size: selected for speed vs memory balance for nowww
+        logger.info(f"Initializing SPI Controller on bus {bus}, device {device}")
+
+
+    def _verify_connection(self) -> None:
+        """Verify SPI connection is active"""
+        if not self._is_connected or not self.spi:
+            raise ConnectionError("SPI device not connected. Call connect() first.")
+
+    async def connect(self) -> bool:
+        """
+        Establish connection to SPI device with advanced setup
+        Returns: bool indicating success
+        """
+        try:
+            import spidev # Local import only load this if actually trying to connect
+            self.spi = spidev.SpiDev()
+            self.spi.open(self.bus, self.device)
+            
+            # Optimize SPI settings for maximum reliability
+            self.spi.max_speed_hz = 10000000  # 10MHz - Will auto-negotiate down if needed
+            self.spi.mode = 0 # SPI mode 0 (CPOL=0, CPHA=0)
+            self.spi.bits_per_word = 8
+            self.spi.lsbfirst = False
+            
+            # Verify connection with test command
+            if self._test_connection():
+                self._is_connected = True
+                logger.success("SPI connection established successfully")
+                
+                # Auto detect connected chip
+                self.chip_info = self._detect_chip()
+                if self.chip_info:
+                    logger.info(f"Detected: {self.chip_info}")
+                return True
+            
+            # If test fails, log it and return failure
+            logger.error("SPI connection test failed")
+            return False
+            
+        except Exception as e:
+            # badddd
+            logger.error(f"Failed to initialize SPI: {str(e)}")
+            return False
+
+    def _test_connection(self) -> bool:
+        """Verify SPI communication with test commands"""
+        try:
+            # Read JEDEC ID as connection test
+            self.spi.xfer([self.CMD_READ_ID])
+            response = self.spi.readbytes(3) # Should be exactly 3 bytes
+            return len(response) == 3 
+        except Exception:
+            # baddd
+            return False
+
+    def _detect_chip(self) -> Optional[ChipInfo]:
+        """
+        Detect and identify connected flash chip
+        Returns ChipInfo object or None if detection fails
+        """
+        try:
+            # Send JEDEC ID command
+            self.spi.xfer([self.CMD_READ_ID])
+            response = self.spi.readbytes(3)
+            
+            manufacturer_id = response[0]
+            device_id = (response[1] << 8) | response[2]
+            
+            # Lookup chip details (will expandd)
+            chip_sizes = {
+                0xEF4016: (2, 256, 4096),    # W25Q16 (2MB)
+                0xEF4017: (4, 256, 4096),    # W25Q32 (4MB)
+                0xEF4018: (8, 256, 4096),    # W25Q64 (8MB)
+                0xEF4019: (16, 256, 4096),   # W25Q128 (16MB)
+            }
+            # Unique identifier for each chip.
+            chip_id = (manufacturer_id << 16) | device_id
+            if chip_id in chip_sizes:
+                # Return populated ChipInfo if the chip is recognized.
+                size_mb, page_size, sector_size = chip_sizes[chip_id]
+                return ChipInfo(manufacturer_id, device_id, size_mb, page_size, sector_size)
+                # sorry cannot find
+            logger.warning(f"Unknown chip ID: 0x{chip_id:06X}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Chip detection failed: {str(e)}")
+            return None
