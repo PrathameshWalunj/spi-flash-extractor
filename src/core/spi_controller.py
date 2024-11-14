@@ -30,3 +30,19 @@ class ChipInfo:
     Intelligent error handling and recovery
     Real time progress monitoring
         """
+    # SPI Flash Commands (Standard JEDEC)
+    CMD_WRITE_ENABLE = 0x06
+    CMD_WRITE_DISABLE = 0x04
+    CMD_READ_ID = 0x9F
+    CMD_READ_STATUS = 0x05
+    CMD_WRITE_STATUS = 0x01
+    CMD_READ_DATA = 0x03
+    CMD_FAST_READ = 0x0B
+    CMD_PAGE_PROGRAM = 0x02
+    CMD_SECTOR_ERASE = 0x20
+    CMD_CHIP_ERASE = 0xC7
+    
+    # Status Register Bits
+    STATUS_WIP = 0x01  # Write In Progress
+    STATUS_WEL = 0x02  # Write Enable Latch
+
