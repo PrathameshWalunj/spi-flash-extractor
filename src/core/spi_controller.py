@@ -30,6 +30,7 @@ class ChipInfo:
     Intelligent error handling and recovery
     Real time progress monitoring
         """
+    
     # SPI Flash Commands (Standard JEDEC)
     CMD_WRITE_ENABLE = 0x06
     CMD_WRITE_DISABLE = 0x04
@@ -45,6 +46,7 @@ class ChipInfo:
     # Status Register Bits
     STATUS_WIP = 0x01  # Write In Progress
     STATUS_WEL = 0x02  # Write Enable Latch
+
 
     def __init__(self, bus: int = 0, device: int = 0):
         """Initialize the SPI controller with advanced error checking"""
@@ -143,3 +145,84 @@ class ChipInfo:
         except Exception as e:
             logger.error(f"Chip detection failed: {str(e)}")
             return None
+
+    async def read_firmware(self, start_address: int = 0, length: Optional[int] = None) -> Optional[bytes]:
+        """
+        Read firmware data with error handling and progress monitoring
+        
+        Args:
+            start_address: Starting address to read from
+            length: Number of bytes to read (None = entire chip)
+            
+        Returns:
+            bytes containing the read data or None if failed
+        """
+        self._verify_connection()
+        
+        try:
+            if not length and self.chip_info:
+                length = self.chip_info.size_mb * 1024 * 1024
+            elif not length:
+                 # No chip size available and no length provided; problem
+                raise ValueError("Must specify length if chip size unknown")
+                
+            data = bytearray() # Buffer for the data we read.
+            address = start_address
+            remaining = length
+            
+            # Monitor progress as we read
+            with logger.progress("Reading firmware...") as progress:
+                while remaining > 0:
+                    # Read a chunk of data each time
+                    chunk_size = min(remaining, self._buffer_size)
+                    chunk = await self._read_chunk(address, chunk_size)
+                    if not chunk:
+                        raise IOError(f"Failed to read at address 0x{address:06X}")
+                        
+                    data.extend(chunk)
+                    address += chunk_size
+                    remaining -= chunk_size
+                    
+                    # Update progress
+                    progress.update(f"Read {len(data)}/{length} bytes")
+                    
+            logger.success(f"Successfully read {len(data)} bytes of firmware")
+            return bytes(data)
+            
+        except Exception as e:
+            # badd see log
+            logger.error(f"Firmware read failed: {str(e)}")
+            return None
+
+    async def _read_chunk(self, address: int, length: int) -> Optional[bytes]:
+        """Read a chunk of data with retries and verification"""
+        for attempt in range(3):  # 3 retries
+            try:
+                # Fast read command with address
+                cmd = [
+                    self.CMD_FAST_READ,
+                    (address >> 16) & 0xFF,
+                    (address >> 8) & 0xFF,
+                    address & 0xFF,
+                    0  # Dummy byte for fast read
+                ]
+                # Send command and read response
+                self.spi.xfer(cmd)
+                data = self.spi.readbytes(length)
+                 # Ensuring we got the expected amount of data
+                if len(data) == length:
+                    return bytes(data)
+                    
+            except Exception as e:
+                logger.warning(f"Read attempt {attempt + 1} failed: {str(e)}")
+                await asyncio.sleep(0.1)  # Short delay before retry
+                
+        return None
+
+    def close(self) -> None:
+        """Clean up resources and close connection"""
+        if self.spi:
+            self.spi.close()
+            self._is_connected = False
+            logger.info("SPI connection closed")
+
